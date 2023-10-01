@@ -7,7 +7,7 @@ Pinged is a simple program which solely transmits payload using only unreliable 
 
 It requiers binanry ran on target host to listen for incoming ICMP packets.
 
-By default it accepts data in stdin or specifed file path specifed after "-f path/to/file" flag.
+By default it accepts data in stdin or specifed file path after "-f path/to/file" flag.
 
 Supplied data may be encoded into base64 with "-b" flag before transmission.
 
