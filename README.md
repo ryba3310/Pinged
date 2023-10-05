@@ -21,8 +21,12 @@ Root privileges or CAP_NET_RAW capabilities set are required for usage of SOCK_R
 # To listen on target host
 ./pinged
 
+p# To send payload from stdin
+./pinged 192.168.1.1
+
 # To send payload from a file
-./pinged -f file/to/path 1.1.1.1
+./pinged -f file/to/path 192.168.1.1
+
 ```
 
 # About
@@ -49,3 +53,5 @@ Please keep in mind it's not developed in a malicious puropse therefore any IDS 
 - ⚠️ Add base64 encoding in client mode
 
 - ⚠️  Set listener socket to SOCK_DGRAM type for rootless listening on target host
+
+- ⚠️  Add verbose mode with -v flag for debugging

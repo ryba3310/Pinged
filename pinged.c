@@ -10,7 +10,8 @@
 #include <netinet/ip.h>     // ip header structure and macros, netinet/in.h is also valid, INADDR_ANY = 0.0.0.0
 #include <netinet/in.h>
 #include <netinet/ip_icmp.h>   // icmp header structure and macros
-#include <sys/select.h>     // for select() func and timeval struct for timeout in socket read or write
+#include <sys/time.h>       // for timeval struct
+#include <sys/select.h>     // for select() func for timeout in socket read or write
 
 
 #define MAX_PKT_S 65535     // IP_MAXPACKET defined in netinet/ip is the same *todo*
@@ -24,7 +25,7 @@ struct sockaddr_in srcaddr, dstaddr;
 struct icmp_pkt
 {
     struct icmphdr hdr;
-    char data[MAX_PAYLOAD];
+    char data[];    // Flexible array member introduced in C99
 };
 
 
@@ -107,8 +108,10 @@ void send_data(char *file_name, char *address)
             exit(1);
         }
     }
-
     int socket_fd;
+    struct timeval timeout;
+    timeout.tv_sec = 2;
+    timeout.tv_usec = 0;
     // by default kernel builds source part of ip header for pkt, this behaviour may be turned off with IP_HDRINCL socket option \
     // destination part is determained with sendto() supplied with sockaddr_in struck
     if ((socket_fd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) < 0)
@@ -116,36 +119,62 @@ void send_data(char *file_name, char *address)
         fprintf(stderr, "Error getting socket number\nError: %s\n", strerror(errno));
         exit(1);
     }
+    // Setting timeout for recvfrom() at socket level instead of select() which is suited for multiple socket fds
+    if (setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout)) < 0)
+    {
+        fprintf(stderr, "setsockopt error\nError: %s\n", strerror(errno));
+    }
 
     memset(&dstaddr, 0, sizeof(dstaddr));
     dstaddr.sin_family = AF_INET;
+    // Set dst ip address for sendto()
     if ((inet_aton(address, &dstaddr.sin_addr)) == 0)
     {
         fprintf(stderr, "inet_aton() invalid ip address\nError: %s\n", strerror(errno));
         exit(1);
     }
     // build icmp packet including payload
-    int sent_bytes, i = 0;
-    struct icmp_pkt pkt;
-    memset(&pkt, 0, sizeof(pkt));
-    pkt.hdr.type = ICMP_ECHO;
-    pkt.hdr.code = CODE_DATA;
-    pkt.hdr.un.echo.id = getpid();
-    for (int n = sizeof(pkt.data); i < n - 1; i++)
+    int sent_bytes, bytes_read;
+    socklen_t src_sockaddr_s = sizeof(srcaddr);      // recvform() expects socklen_t type
+    socklen_t dst_sockaddr_s = sizeof(dstaddr);      // sendto() expects socklen_t type
+    struct icmp_pkt *pkt;
+    struct icmp reply;
+    char buffer[MAX_PAYLOAD];
+
+    while((bytes_read = fread(&buffer, 1, MAX_PAYLOAD, file)) > 0)
     {
-        pkt.data[i] = 'L';
+        printf("Read bytes: %d\n", bytes_read);
+        printf("Data: %s\n", buffer);
+        pkt = malloc(sizeof(struct icmp_pkt) + bytes_read);   // Flexible array member
+        pkt->hdr.type = ICMP_ECHO;
+        pkt->hdr.code = CODE_DATA;
+        pkt->hdr.un.echo.id = getpid();  // not mandatory, but provides information to kernel for incoming reyply
+        pkt->hdr.checksum = checksum(&pkt, sizeof(pkt));
+        memcpy(pkt->data, buffer, bytes_read);
+        // Wait for reply packet and resend in case of reply which indicates target didn't receive payload
+        do
+        {
+            if ((sent_bytes = sendto(socket_fd, pkt, sizeof(struct icmp_pkt) + bytes_read, 0, &dstaddr, dst_sockaddr_s)) < 0)
+            {
+                fprintf(stderr, "Couldn't send packet\tError: %s\n", strerror(errno));
+                exit(1);
+            }
+            printf("Sent %d bytes with sendto() at dst: %s\n", sent_bytes, address);
+            if (recvfrom(socket_fd, &reply, sizeof(reply), 0, &srcaddr, &src_sockaddr_s) < 0)
+            {
+                fprintf(stderr, "Error receiving packet\tError: %s\n", strerror(errno));
+            }
+            timeout.tv_sec = 2;
+            timeout.tv_usec = 0;
+            printf("Source: %s\n", inet_ntoa(srcaddr.sin_addr));
+            printf("Destination: %s\n", inet_ntoa(dstaddr.sin_addr));
+        } while (srcaddr.sin_addr.s_addr != dstaddr.sin_addr.s_addr);
+
     }
-    pkt.data[i] = '\0';
-    pkt.hdr.checksum = checksum(&pkt, sizeof(pkt));
-    if ((sent_bytes = sendto(socket_fd, &pkt, sizeof(pkt), 0, &dstaddr, sizeof(dstaddr))) < 0)
-    {
-        fprintf(stderr, "Couldn't send packet\nError: %s\n", strerror(errno));
-        exit(1);
-    }
-    printf("Sent %d bytes with sendto() at dst: %s\n", sent_bytes, address);
 
 
 }
+
 
 void listen_for_icmp()
 {
@@ -157,15 +186,13 @@ void listen_for_icmp()
         exit(1);
     }
 
-    struct sockaddr sockaddr;
     char buffer[MAX_PKT_S];
     int pkt_size;
-    socklen_t sockaddr_s = sizeof(sockaddr_s);      // recvform expects socklen_t type
-
+    socklen_t sockaddr_s = sizeof(srcaddr);      // recvform expects socklen_t type
 
     while(1)
     {
-        if((pkt_size = recvfrom(socket_fd, buffer, MAX_PKT_S, 0, &sockaddr, &sockaddr_s)) < 0)   // recfrom() doesn't save source address into supplied src_addr struct as documentation pointed
+        if((pkt_size = recvfrom(socket_fd, buffer, MAX_PKT_S, 0, &srcaddr, &sockaddr_s)) < 0)
         {
             fprintf(stderr, "Error recvform() func\nError: %s\n", strerror(errno));
             exit(1);
@@ -173,8 +200,8 @@ void listen_for_icmp()
         printf("Got packet of length: %d\n", pkt_size);
         // parse and print all metadata and then print data(in final print data only)
         print_data(buffer, pkt_size);
+        memset(buffer, 0, MAX_PKT_S);
     }
-
 }
 
 
@@ -184,6 +211,7 @@ void print_data(char *buffer, int size)
     struct iphdr *iph = (struct iphdr *)buffer;
     int iph_len = iph->ihl * 4;    // length of header is stored as number of 32-bit words, resulting in number * 4 = # bytes
 
+    // No need to set source address, recvfrom() does it, only dst address needs to be initilized, but set anyway for clarity and consistency
     memset(&srcaddr, 0, sizeof(srcaddr));
     srcaddr.sin_addr.s_addr = iph->saddr;
     memset(&dstaddr, 0, sizeof(dstaddr));
@@ -193,14 +221,13 @@ void print_data(char *buffer, int size)
 
     printf("Source: %s\n", inet_ntoa(srcaddr.sin_addr));
     printf("Destination: %s\n", inet_ntoa(dstaddr.sin_addr));
-
     printf("Type: %d\tCode: %d\n", icmph->type, icmph->code);
 
     if(icmph->code == CODE_DATA)
     {
         printf("Got payload ICMP\n");
         char *data = (char *)(buffer + iph_len + ICMPH_LEN);
-        printf("Data: \n%s\n", data);
+        printf("Data: %s\n", data);
     }
 }
 
