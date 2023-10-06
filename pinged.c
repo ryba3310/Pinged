@@ -149,8 +149,8 @@ void send_data(char *file_name, char *address)
         pkt->hdr.type = ICMP_ECHO;
         pkt->hdr.code = CODE_DATA;
         pkt->hdr.un.echo.id = getpid();  // not mandatory, but provides information to kernel for incoming reyply
-        pkt->hdr.checksum = checksum(&pkt, sizeof(pkt));
         memcpy(pkt->data, buffer, bytes_read);
+        pkt->hdr.checksum = checksum(&pkt, sizeof(struct icmp_pkt) + bytes_read);    // setting checksum after the whole packet is assebled
         // Wait for reply packet and resend in case of reply which indicates target didn't receive payload
         do
         {
@@ -164,12 +164,12 @@ void send_data(char *file_name, char *address)
             {
                 fprintf(stderr, "Error receiving packet\tError: %s\n", strerror(errno));
             }
-            timeout.tv_sec = 2;
+            timeout.tv_sec = 2;     // reinitiliazing is necessary after every call to recvfrom beacouse internal implementation stores elapsed time after every call
             timeout.tv_usec = 0;
             printf("Source: %s\n", inet_ntoa(srcaddr.sin_addr));
             printf("Destination: %s\n", inet_ntoa(dstaddr.sin_addr));
         } while (srcaddr.sin_addr.s_addr != dstaddr.sin_addr.s_addr);
-
+        free(pkt);
     }
 
 

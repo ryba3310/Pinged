@@ -44,9 +44,9 @@ Please keep in mind it's not developed in a malicious puropse therefore any IDS 
 
 - ✅ Create client mode which expects IP destination as an argument and by default accepts STDIN as input or file spcifed by "-f" flags
 
-- ⚠️ Parse payload into packeets and avoid IP fragmentation
+- ✅Parse payload into packeets and avoid IP fragmentation
 
-- ⚠️ Listen for resend requests in client mode, based on echo reply from target
+- ✅Listen for resend requests in client mode, based on echo reply from target
 
 - ✅ Check IPPROTO_ICMP protocol and SOCK_DGRAM type with sysctl 'net.ipv4.ping_group_range allowed' for rootless application
 
