@@ -38,7 +38,7 @@ Please keep in mind it's not developed in a malicious puropse therefore any IDS 
 
 - ✅ Create listener ran without flags that outputs the payload of ICMP to STDOUT
 
-- ✅ ~~Filter IMCP packets based on identifier inside payload~~ Filter ICMP packets based on code filed insied ICMP header
+- ✅ ~~Filter IMCP packets based on identifier inside payload~~ Filter ICMP packets based on code filled insied ICMP header
 
 - ✅ Check data integrity and in case of error, request it again from client, based on checksum ICMP field
 
@@ -50,8 +50,14 @@ Please keep in mind it's not developed in a malicious puropse therefore any IDS 
 
 - ✅ Check IPPROTO_ICMP protocol and SOCK_DGRAM type with sysctl 'net.ipv4.ping_group_range allowed' for rootless application
 
-- ⚠️ Add base64 encoding in client mode
+- ✅ Add base64 encoding in client mode
 
 - ⚠️  Set listener socket to SOCK_DGRAM type for rootless listening on target host
 
-- ⚠️  Add verbose mode with -v flag for debugging
+- ✅  Add verbose mode with -v flag for debugging
+
+- ✅  Split source code into declarations in helpers.h and definitions in helpers.c
+
+- ⚠️ Tidy up verbose messeges and overall source code
+
+- ⚠️ Patch bug where received payload isin't printed to stdout withoud '\n' in formatting
