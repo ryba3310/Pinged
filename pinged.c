@@ -21,6 +21,7 @@
 #define CODE_DATA 20        // Unused value in icmp codes of icmp ECHO type for distnguishing payload packets from nomal ICMP traffic
 #define CODE_DATA_END 21    // Indicates end of transmisios for target host, EOT signal could be defined as data_len < max_payload, but it omits case with total data length as max_payload
 #define ICMPH_LEN 8         // Length of icmp header
+#define IP_ICMP_S 28        // Total length of ip header + icmp header
 
 
 struct sockaddr_in srcaddr, dstaddr;
@@ -151,7 +152,6 @@ void send_data(char *file_name, char *address)
     while ((bytes_read = fread(&buffer, 1, b64flag ? MAX_B64 : MAX_PAYLOAD, file)) > 0)
     {
         verbose("Read bytes: %d\n", bytes_read);
-        verbose("Data: %s\n", buffer);
         if (b64flag)
         {
             verbose("Encoding data into base64\n");
@@ -163,12 +163,10 @@ void send_data(char *file_name, char *address)
             free(encoded);      // encode_b64 allocates memory on heap becouse data length may vary
         }
         pkt = malloc(sizeof(struct icmp_pkt) + bytes_read);   // Flexible array member
-        verbose("Size of malloc call: %d\n", sizeof(struct icmp_pkt) + bytes_read);
         pkt->hdr.type = ICMP_ECHO;
         pkt->hdr.code = feof(file) ? CODE_DATA_END : CODE_DATA;    // If its end of payload to transmit, it is indicated insied icmp header for receiver
         pkt->hdr.un.echo.id = getpid();  // Not mandatory, but provides information to kernel for incoming reyply
         memcpy(pkt->data, buffer, bytes_read);
-        verbose("Data length: %d pkt->data before sending: %s\n", strlen(pkt->data), pkt->data);
         pkt->hdr.checksum = checksum(&pkt, sizeof(struct icmp_pkt) + bytes_read);    // Setting checksum after the whole packet is assembled
         // Wait for reply packet and resend in case of no reply which indicates target didn't receive payload
         do
@@ -180,16 +178,15 @@ void send_data(char *file_name, char *address)
             }
             verbose("Sent %d bytes with sendto() at dst: %s\n", sent_bytes, address);
             // Set sockaddr_in struct for every reacvfrom()
-            memset(&srcaddr, 0, sizeof(srcaddr));
-            if (recvfrom(socket_fd, reply_buffer, MAX_PKT_S, 0, (struct sockaddr*)&srcaddr, &src_sockaddr_s) < 0)
+            /* memset(&srcaddr, 0, sizeof(srcaddr)); */
+            if (recvfrom(socket_fd, reply_buffer, MAX_PKT_S, 0, (struct sockaddr *)&srcaddr, &src_sockaddr_s) < 0)
             {
                 fprintf(stderr, "Error receiving packet\tError: %s\n", strerror(errno));
             }
             timeout.tv_sec = 2;     // Reinitialization is necessary after every call to recvfrom beacouse internal implementation stores elapsed time after every call
             timeout.tv_usec = 0;
-            verbose("Got reply\nSource: %s\t", inet_ntoa(srcaddr.sin_addr));
-            verbose("Destination: %s\n", inet_ntoa(dstaddr.sin_addr));
         } while (srcaddr.sin_addr.s_addr != dstaddr.sin_addr.s_addr);
+        verbose("Got reply\nSource: %s\tsock_addr_s: %d\t", inet_ntoa(srcaddr.sin_addr), src_sockaddr_s);
         verbose("%s received %d bytes in reply\n", inet_ntoa(srcaddr.sin_addr), strlen(reply_buffer));
         memset(buffer, 0, MAX_PAYLOAD);
         memset(reply_buffer, 0, MAX_PAYLOAD);
@@ -220,7 +217,13 @@ void listen_for_icmp()
             fprintf(stderr, "Error Recvfrom() func\nError: %s\n", strerror(errno));
             exit(1);
         }
-        verbose("\nGot packet of length: %d\n", pkt_size);
+        char reply[IP_ICMP_S];
+        memcpy(reply, buffer, IP_ICMP_S);
+        if (sendto(socket_fd, buffer, IP_ICMP_S, 0, (struct sockaddr *)&srcaddr, sockaddr_s) < 0)
+        {
+            fprintf(stderr, "Couldn't send packet\tError: %s\n", strerror(errno));
+            exit(1);
+        }
         // Parse and print all metadata and then print data(in final print data only)
         if (print_data(buffer, pkt_size) == CODE_DATA_END)
         {
