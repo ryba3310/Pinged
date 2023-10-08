@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "helpers.h"
 #include <string.h>
+#include <stdlib.h>     // malloc()
 #include <stdarg.h>     // vla and macros for va_list type
 
 
@@ -36,7 +37,7 @@ static int encoded_b64_len(int input_len)
 }
 
 
-char *encode_b64(const unsigned char *input, int input_len)
+char *encode_b64(const char *input, int input_len)
 {
     if (input == NULL || input_len == 0)
     {
@@ -44,7 +45,7 @@ char *encode_b64(const unsigned char *input, int input_len)
     }
     unsigned int value, encoded_len;
     encoded_len = encoded_b64_len(input_len);
-    char *output = malloc(encoded_len + 1);     // Add extra NUL char at end of encoded string
+    char *output = (char *)malloc(encoded_len + 1);     // Add extra NUL char at end of encoded string
     output[encoded_len] = '\0';
 
     for (int i = 0, j = 0; i < input_len; i += 3, j += 4) {
@@ -59,6 +60,27 @@ char *encode_b64(const unsigned char *input, int input_len)
         output[j + 3] = i + 2 < input_len ? b64chars[value & 0x3F] : '=';
     }
     return output;
+}
+
+
+unsigned short checksum(void *buffer, int length)
+{
+    unsigned short *buf = buffer;
+    unsigned int sum;
+    unsigned short result;
+
+    for (sum = 0; length > 1; length -= 2)
+    {
+        sum += *buf++;
+    }
+    if (length == 1)
+    {
+        sum += *(unsigned char*)buf;
+    }
+    sum = (sum >> 16) + (sum & 0xFFFF);
+    sum += (sum >> 16);
+    result = ~sum;
+    return result;
 }
 
 

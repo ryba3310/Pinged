@@ -19,6 +19,7 @@
 #define MAX_PAYLOAD 1472    // To avoid packet fragmentation due to MTU over internet. 20 bytes IP header, 8 bytes ICMP header
 #define MAX_B64 1104        // Maximum payload read for base64 encoidng to fit into icmp packet
 #define CODE_DATA 20        // Unused value in icmp codes of icmp ECHO type for distnguishing payload packets from nomal ICMP traffic
+#define CODE_DATA_END 21    // Indicates end of transmisios for target host, EOT signal could be defined as data_len < max_payload, but it omits case with total data length as max_payload
 #define ICMPH_LEN 8         // Length of icmp header
 
 
@@ -31,7 +32,7 @@ struct icmp_pkt
 
 int fflag = 0, b64flag = 0;
 
-void print_data(char *buffer, int size);
+int print_data(const char *buffer, int size);
 void listen_for_icmp();
 void send_data(char *file_name, char *address);
 unsigned short checksum(void *buffer, int length);
@@ -80,7 +81,8 @@ int main(int argc, char *argv[])
                 exit(1);
         }
     }
-
+    verbose("Flags: f = %d with argument = %s\tb = %d\t v = 1\n", fflag, file, b64flag);
+    // optind value at start is 1, it gose first through all the switch '-' arguments and if there are non-options arguments it is less thna argc which indicates non-option argument
     if (optind + 1 == argc)
     {
         ip_addr = argv[optind];
@@ -104,14 +106,15 @@ int main(int argc, char *argv[])
 void send_data(char *file_name, char *address)
 {
     FILE *file = stdin;
-    if(fflag)
+    if (fflag)
     {
-        if((file = fopen(file_name, "r")) == NULL)
+        if ((file = fopen(file_name, "r")) == NULL)
         {
             fprintf(stderr, "Couldnt open %s file\nError: %s\n", file_name, strerror(errno));
             exit(1);
         }
     }
+    // Setting socket and timeout on recvfrom()
     int socket_fd;
     struct timeval timeout;
     timeout.tv_sec = 2;
@@ -129,9 +132,9 @@ void send_data(char *file_name, char *address)
         fprintf(stderr, "setsockopt error\nError: %s\n", strerror(errno));
     }
 
+    // Set dst ip address for sendto()
     memset(&dstaddr, 0, sizeof(dstaddr));
     dstaddr.sin_family = AF_INET;
-    // Set dst ip address for sendto()
     if ((inet_aton(address, &dstaddr.sin_addr)) == 0)
     {
         fprintf(stderr, "inet_aton() invalid ip address\nError: %s\n", strerror(errno));
@@ -139,43 +142,46 @@ void send_data(char *file_name, char *address)
     }
     // Build icmp packet including payload
     int sent_bytes, bytes_read;
-    socklen_t src_sockaddr_s = sizeof(srcaddr);      // Recvform() expects socklen_t type
+    socklen_t src_sockaddr_s = sizeof(srcaddr);      // Recvfrom() expects socklen_t type
     socklen_t dst_sockaddr_s = sizeof(dstaddr);      // Sendto() expects socklen_t type
     struct icmp_pkt *pkt;
-    struct icmp reply;
     char buffer[MAX_PAYLOAD];
+    char reply_buffer[MAX_PKT_S];
 
-    while((bytes_read = fread(&buffer, 1, b64flag ? MAX_B64 : MAX_PAYLOAD, file)) > 0)
+    while ((bytes_read = fread(&buffer, 1, b64flag ? MAX_B64 : MAX_PAYLOAD, file)) > 0)
     {
         verbose("Read bytes: %d\n", bytes_read);
         verbose("Data: %s\n", buffer);
-        pkt = malloc(sizeof(struct icmp_pkt) + bytes_read);   // Flexible array member
-        pkt->hdr.type = ICMP_ECHO;
-        pkt->hdr.code = CODE_DATA;
-        pkt->hdr.un.echo.id = getpid();  // Not mandatory, but provides information to kernel for incoming reyply
         if (b64flag)
         {
+            verbose("Encoding data into base64\n");
             char *encoded = encode_b64(buffer, bytes_read);
             bytes_read = strlen(encoded);
-            verbose("Encoded data: %s\n", encoded);
-            verbose("Orginal data: %s\n", buffer);
+            verbose("Encoded length: %d\nEncoded data: %s\n", bytes_read, encoded);
             memset(buffer, 0, MAX_PAYLOAD);
             memcpy(buffer, encoded, bytes_read);
             free(encoded);      // encode_b64 allocates memory on heap becouse data length may vary
         }
-        memcpy(pkt->data, buffer, strlen(buffer));
-        verbose("pkt->data before sending: %s\n", pkt->data);
+        pkt = malloc(sizeof(struct icmp_pkt) + bytes_read);   // Flexible array member
+        verbose("Size of malloc call: %d\n", sizeof(struct icmp_pkt) + bytes_read);
+        pkt->hdr.type = ICMP_ECHO;
+        pkt->hdr.code = feof(file) ? CODE_DATA_END : CODE_DATA;    // If its end of payload to transmit, it is indicated insied icmp header for receiver
+        pkt->hdr.un.echo.id = getpid();  // Not mandatory, but provides information to kernel for incoming reyply
+        memcpy(pkt->data, buffer, bytes_read);
+        verbose("Data length: %d pkt->data before sending: %s\n", strlen(pkt->data), pkt->data);
         pkt->hdr.checksum = checksum(&pkt, sizeof(struct icmp_pkt) + bytes_read);    // Setting checksum after the whole packet is assembled
-        // Wait for reply packet and resend in case of reply which indicates target didn't receive payload
+        // Wait for reply packet and resend in case of no reply which indicates target didn't receive payload
         do
         {
-            if ((sent_bytes = sendto(socket_fd, pkt, sizeof(struct icmp_pkt) + bytes_read, 0, &dstaddr, dst_sockaddr_s)) < 0)
+            if ((sent_bytes = sendto(socket_fd, pkt, sizeof(struct icmp_pkt) + bytes_read, 0, (struct sockaddr *)&dstaddr, dst_sockaddr_s)) < 0)
             {
                 fprintf(stderr, "Couldn't send packet\tError: %s\n", strerror(errno));
                 exit(1);
             }
             verbose("Sent %d bytes with sendto() at dst: %s\n", sent_bytes, address);
-            if (recvfrom(socket_fd, &reply, sizeof(reply), 0, &srcaddr, &src_sockaddr_s) < 0)
+            // Set sockaddr_in struct for every reacvfrom()
+            memset(&srcaddr, 0, sizeof(srcaddr));
+            if (recvfrom(socket_fd, reply_buffer, MAX_PKT_S, 0, (struct sockaddr*)&srcaddr, &src_sockaddr_s) < 0)
             {
                 fprintf(stderr, "Error receiving packet\tError: %s\n", strerror(errno));
             }
@@ -184,11 +190,12 @@ void send_data(char *file_name, char *address)
             verbose("Got reply\nSource: %s\t", inet_ntoa(srcaddr.sin_addr));
             verbose("Destination: %s\n", inet_ntoa(dstaddr.sin_addr));
         } while (srcaddr.sin_addr.s_addr != dstaddr.sin_addr.s_addr);
-        printf("%s received %d bytes\n", inet_ntoa(dstaddr.sin_addr), sent_bytes);
-        free(pkt);
+        verbose("%s received %d bytes in reply\n", inet_ntoa(srcaddr.sin_addr), strlen(reply_buffer));
+        memset(buffer, 0, MAX_PAYLOAD);
+        memset(reply_buffer, 0, MAX_PAYLOAD);
     }
-
-
+    free(pkt);
+    return;
 }
 
 
@@ -204,29 +211,32 @@ void listen_for_icmp()
 
     char buffer[MAX_PKT_S];
     int pkt_size;
-    socklen_t sockaddr_s = sizeof(srcaddr);      // Recvform expects socklen_t type
+    socklen_t sockaddr_s = sizeof(srcaddr);      // Recvfrom expects socklen_t type
 
-    while(1)
+    while (1)
     {
-        if((pkt_size = recvfrom(socket_fd, buffer, MAX_PKT_S, 0, &srcaddr, &sockaddr_s)) < 0)
+        if ((pkt_size = recvfrom(socket_fd, buffer, MAX_PKT_S, 0, (struct sockaddr*)&srcaddr, &sockaddr_s)) < 0)
         {
-            fprintf(stderr, "Error recvform() func\nError: %s\n", strerror(errno));
+            fprintf(stderr, "Error Recvfrom() func\nError: %s\n", strerror(errno));
             exit(1);
         }
-        verbose("Got packet of length: %d\n", pkt_size);
+        verbose("\nGot packet of length: %d\n", pkt_size);
         // Parse and print all metadata and then print data(in final print data only)
-        print_data(buffer, pkt_size);
+        if (print_data(buffer, pkt_size) == CODE_DATA_END)
+        {
+            break;
+        }
         memset(buffer, 0, MAX_PKT_S);
     }
+    return;
 }
 
 
 
-void print_data(char *buffer, int size)
+int print_data(const char *buffer, int size)
 {
     struct iphdr *iph = (struct iphdr *)buffer;
     int iph_len = iph->ihl * 4;    // Length of header is stored as number of 32-bit words, resulting in number * 4 = # bytes
-
     // No need to set source address, recvfrom() does it, only dst address needs to be initilized, but set anyway for clarity and consistency
     memset(&srcaddr, 0, sizeof(srcaddr));
     srcaddr.sin_addr.s_addr = iph->saddr;
@@ -234,41 +244,36 @@ void print_data(char *buffer, int size)
     dstaddr.sin_addr.s_addr = iph->daddr;
 
     struct icmphdr *icmph = (struct icmphdr*)(buffer + iph_len);
-
+    char *data = (char *)(buffer + iph_len + ICMPH_LEN);
+    int data_len = strlen(data);
     verbose("Source: %s\n", inet_ntoa(srcaddr.sin_addr));
     verbose("Destination: %s\n", inet_ntoa(dstaddr.sin_addr));
-    verbose("Type: %d\tCode: %d\n\n", icmph->type, icmph->code);
+    verbose("Type: %d\tCode: %d\n", icmph->type, icmph->code);
 
-    if(icmph->code == CODE_DATA)
+    if (icmph->code == CODE_DATA)
     {
         verbose("Got payload ICMP\n");
-        char *data = (char *)(buffer + iph_len + ICMPH_LEN);
-        verbose("Data: \n", data);
+        verbose("Length of data: %d\n Last char: %d\n", data_len, data[data_len]);
+        verbose("Data:\n");
         printf("%s", data);
+        fflush(stdout);     // Data sent to stoud without '\n' char at the end needs to be explicitly flushed beacouse the stream is line buffered
         verbose("\n");
     }
+    else if(icmph->code == CODE_DATA_END)
+    {
+        verbose("Got last payload ICMP\n");
+        verbose("Length of data: %d\n Last char: %d\n", data_len, data[data_len]);
+        verbose("Data:\n");
+        printf("%s", data);
+        fflush(stdout);     // Data sent to stoud without '\n' char at the end needs to be explicitly flushed beacouse the stream is line buffered
+        verbose("\n");
+        return CODE_DATA_END;
+    }
+    return data_len;
 }
 
 
-unsigned short checksum(void *buffer, int length)
-{
-    unsigned short *buf = buffer;
-    unsigned int sum;
-    unsigned short result;
 
-    for (sum = 0; length > 1; length -= 2)
-    {
-        sum += *buf++;
-    }
-    if (length == 1)
-    {
-        sum += *(unsigned char*)buf;
-    }
-    sum = (sum >> 16) + (sum & 0xFFFF);
-    sum += (sum >> 16);
-    result = ~sum;
-    return result;
-}
 
 
 

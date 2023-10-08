@@ -11,7 +11,7 @@ By default it accepts data in stdin or specifed file path after "-f path/to/file
 
 Supplied data may be encoded into base64 with "-b" flag before transmission.
 
-It is developed for the sake of breviy, as a learning project and is inspired by Netcat.
+It is developed for the sake of brevity, as a learning project and is inspired by Netcat.
 
 Root privileges or CAP_NET_RAW capabilities set are required for usage of SOCK_RAW from socket library to create socket and allow sending and recieving packets.
 
@@ -21,12 +21,11 @@ Root privileges or CAP_NET_RAW capabilities set are required for usage of SOCK_R
 # To listen on target host
 ./pinged
 
-p# To send payload from stdin
-./pinged 192.168.1.1
-
 # To send payload from a file
 ./pinged -f file/to/path 192.168.1.1
 
+# To send payload from stdin and encode it to base64
+echo -n 'Hello' | ./pinged 192.168.1.1
 ```
 
 # About
@@ -58,6 +57,8 @@ Please keep in mind it's not developed in a malicious puropse therefore any IDS 
 
 - ✅  Split source code into declarations in helpers.h and definitions in helpers.c
 
-- ⚠️ Tidy up verbose messeges and overall source code
+- ✅ Tidy up verbose messeges and overall source code
 
-- ⚠️ Patch bug where received payload isin't printed to stdout withoud '\n' in formatting
+- ✅️ Patch bug where received payload isin't printed to stdout withoud '\n' in formatting
+
+- ⚠️ Think about reverse shell capability with listener being able to respond with payload
