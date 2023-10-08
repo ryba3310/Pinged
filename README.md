@@ -27,6 +27,16 @@ Root privileges or CAP_NET_RAW capabilities set are required for usage of SOCK_R
 # To send payload from stdin and encode it to base64
 echo -n 'Hello' | ./pinged 192.168.1.1
 ```
+# Installation
+
+```sh
+# To grab this repo
+git clone https://github.com/ryba3310/Pinged.git
+
+# To compile with clang 
+clang pinged.c helpers.c -o pinged
+
+```
 
 # About
 
