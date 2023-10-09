@@ -1,5 +1,6 @@
 # Pinged
 
+[![Watch the video](https://img.youtube.com/vi/G_S8c3rZDac/hqdefault.jpg)](https://youtu.be/G_S8c3rZDac)
 
 ## In case you need to get someone Pinged
 
