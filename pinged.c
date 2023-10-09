@@ -32,11 +32,13 @@ struct icmp_pkt
 };
 
 int fflag = 0, b64flag = 0;
+FILE *file;
 
 int print_data(const char *buffer, int size);
 void listen_for_icmp();
 void send_data(char *file_name, char *address);
 unsigned short checksum(void *buffer, int length);
+struct icmp_pkt *build_pkt(const char *data, int data_len);
 
 
 int main(int argc, char *argv[])
@@ -48,9 +50,8 @@ int main(int argc, char *argv[])
     }
 
     int opt;
-    char *file, *ip_addr;
-    fflag = b64flag = 0;
-    file = NULL;
+    char *file_name, *ip_addr;
+    file = stdin;
     ip_addr = NULL;
 
     while ((opt = getopt (argc, argv, ":bf:v")) != -1)
@@ -62,7 +63,7 @@ int main(int argc, char *argv[])
                 break;
             case 'f':
                 fflag = 1;
-                file = optarg;
+                file_name = optarg;
                 break;
             case 'v':
                 set_verbose(1);
@@ -88,7 +89,7 @@ int main(int argc, char *argv[])
     {
         ip_addr = argv[optind];
         verbose("Destination address is: %s\n", ip_addr);
-        send_data(file, ip_addr);
+        send_data(file_name, ip_addr);
     }
     else
     {
@@ -106,7 +107,6 @@ int main(int argc, char *argv[])
 
 void send_data(char *file_name, char *address)
 {
-    FILE *file = stdin;
     if (fflag)
     {
         if ((file = fopen(file_name, "r")) == NULL)
@@ -162,12 +162,7 @@ void send_data(char *file_name, char *address)
             memcpy(buffer, encoded, bytes_read);
             free(encoded);      // encode_b64 allocates memory on heap becouse data length may vary
         }
-        pkt = malloc(sizeof(struct icmp_pkt) + bytes_read);   // Flexible array member
-        pkt->hdr.type = ICMP_ECHO;
-        pkt->hdr.code = feof(file) ? CODE_DATA_END : CODE_DATA;    // If its end of payload to transmit, it is indicated insied icmp header for receiver
-        pkt->hdr.un.echo.id = getpid();  // Not mandatory, but provides information to kernel for incoming reyply
-        memcpy(pkt->data, buffer, bytes_read);
-        pkt->hdr.checksum = checksum(&pkt, sizeof(struct icmp_pkt) + bytes_read);    // Setting checksum after the whole packet is assembled
+        pkt = build_pkt(buffer, bytes_read);
         // Wait for reply packet and resend in case of no reply which indicates target didn't receive payload
         do
         {
@@ -190,8 +185,8 @@ void send_data(char *file_name, char *address)
         verbose("%s received %d bytes in reply\n", inet_ntoa(srcaddr.sin_addr), strlen(reply_buffer));
         memset(buffer, 0, MAX_PAYLOAD);
         memset(reply_buffer, 0, MAX_PAYLOAD);
+        free(pkt);
     }
-    free(pkt);
     return;
 }
 
@@ -199,13 +194,11 @@ void send_data(char *file_name, char *address)
 void listen_for_icmp()
 {
     int socket_fd;
-
     if ((socket_fd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) < 0)   // IPPROTO_ICMP ignores any other L3 or L4 protocols
     {
         fprintf(stderr, "Error getting socket number\nError: %s\n", strerror(errno));
         exit(1);
     }
-
     char buffer[MAX_PKT_S];
     int pkt_size;
     socklen_t sockaddr_s = sizeof(srcaddr);      // Recvfrom expects socklen_t type
@@ -217,18 +210,19 @@ void listen_for_icmp()
             fprintf(stderr, "Error Recvfrom() func\nError: %s\n", strerror(errno));
             exit(1);
         }
-        char reply[IP_ICMP_S];
-        memcpy(reply, buffer, IP_ICMP_S);
-        if (sendto(socket_fd, buffer, IP_ICMP_S, 0, (struct sockaddr *)&srcaddr, sockaddr_s) < 0)
+        struct icmp_pkt *reply = build_pkt("", 0);  // Build reply packet without payload
+        if (sendto(socket_fd, reply, IP_ICMP_S, 0, (struct sockaddr *)&srcaddr, sockaddr_s) < 0)
         {
             fprintf(stderr, "Couldn't send packet\tError: %s\n", strerror(errno));
             exit(1);
         }
+        free(reply);
         // Parse and print all metadata and then print data(in final print data only)
         if (print_data(buffer, pkt_size) == CODE_DATA_END)
         {
             break;
         }
+        // Reset buffer for next incoming packet
         memset(buffer, 0, MAX_PKT_S);
     }
     return;
@@ -276,7 +270,20 @@ int print_data(const char *buffer, int size)
 }
 
 
-
+struct icmp_pkt *build_pkt(const char *data, int data_len)
+{
+    struct icmp_pkt *pkt = malloc(sizeof(struct icmp_pkt) + data_len);   // Flexible array member
+    if (pkt == NULL)
+    {
+        fprintf(stderr, "Couldnt allocate memory\nError: %s\n", strerror(errno));
+    }
+    pkt->hdr.type = ICMP_ECHO;
+    pkt->hdr.code = feof(file) ? CODE_DATA_END : CODE_DATA;    // If its end of payload to transmit, it is indicated insied icmp header for receiver
+    pkt->hdr.un.echo.id = getpid();  // Not mandatory, but provides information to kernel for incoming reyply
+    memcpy(pkt->data, data, data_len);
+    pkt->hdr.checksum = checksum(&pkt, sizeof(struct icmp_pkt) + data_len);    // Setting checksum after the whole packet is assembled
+    return pkt;
+}
 
 
 
