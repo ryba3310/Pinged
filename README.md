@@ -1,6 +1,6 @@
 # Pinged
 
-[![Watch the video](https://img.youtube.com/vi/G_S8c3rZDac/hqdefault.jpg)](https://youtu.be/G_S8c3rZDac)
+<iframe width="560" height="315" src="https://www.youtube.com/embed/G_S8c3rZDac?si=ZvjA39QHsqDNUoaU" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
 
 ## In case you need to get someone Pinged
 
